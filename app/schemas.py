@@ -2,8 +2,9 @@ import base64
 import binascii
 import re
 from datetime import datetime, timezone
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 
 PHOTO_MAX_BYTES = 2 * 1024 * 1024
@@ -13,11 +14,8 @@ PHOTO_DATA_URL_PATTERN = re.compile(
 )
 
 
-def _validate_photo_data_url(value: str | None) -> str | None:
+def _validate_photo_data_url(value: str) -> str:
     """Validate the supported image data URLs stored in the in-memory database."""
-    if value is None:
-        return None
-
     match = PHOTO_DATA_URL_PATTERN.fullmatch(value)
     if match is None:
         raise ValueError("Photo must be a base64-encoded JPEG, PNG, or WebP image")
@@ -42,6 +40,13 @@ def _validate_photo_data_url(value: str | None) -> str | None:
         raise ValueError("Photo content does not match its declared image type")
 
     return value
+
+
+PhotoDataUrl = Annotated[
+    str,
+    Field(max_length=PHOTO_MAX_DATA_URL_LENGTH),
+    AfterValidator(_validate_photo_data_url),
+]
 
 
 class ContactBase(BaseModel):
@@ -116,12 +121,6 @@ class ContactBase(BaseModel):
         examples=["Met at the SF hackathon."],
     )
 
-    @field_validator("photo")
-    @classmethod
-    def _valid_photo(cls, value: str | None) -> str | None:
-        return _validate_photo_data_url(value)
-
-
 _FULL_EXAMPLE = {
     "first_name": "Ada",
     "last_name": "Lovelace",
@@ -143,6 +142,10 @@ class ContactCreate(ContactBase):
     """Body of `POST /api/v1/contacts`. Only the two names and email are required."""
 
     model_config = ConfigDict(json_schema_extra={"examples": [_FULL_EXAMPLE, _MINIMAL_EXAMPLE]})
+    photo: PhotoDataUrl | None = Field(
+        default=None,
+        description="Base64 data URL for a JPEG, PNG, or WebP contact photo, up to 2 MiB.",
+    )
 
 
 class ContactReplace(ContactBase):
@@ -154,6 +157,10 @@ class ContactReplace(ContactBase):
     """
 
     model_config = ConfigDict(json_schema_extra={"examples": [_FULL_EXAMPLE]})
+    photo: PhotoDataUrl | None = Field(
+        default=None,
+        description="Base64 data URL for a JPEG, PNG, or WebP contact photo, up to 2 MiB.",
+    )
 
 
 class ContactUpdate(BaseModel):
@@ -177,9 +184,8 @@ class ContactUpdate(BaseModel):
         description="New email address. Must not belong to another contact.",
     )
     phone: str | None = Field(default=None, max_length=40, description="New phone number.")
-    photo: str | None = Field(
+    photo: PhotoDataUrl | None = Field(
         default=None,
-        max_length=PHOTO_MAX_DATA_URL_LENGTH,
         description="New base64 JPEG, PNG, or WebP photo; `null` removes it.",
     )
     company: str | None = Field(default=None, max_length=200, description="New company.")
@@ -190,12 +196,6 @@ class ContactUpdate(BaseModel):
     postal_code: str | None = Field(default=None, max_length=20, description="New postal code.")
     country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
-
-    @field_validator("photo")
-    @classmethod
-    def _valid_photo(cls, value: str | None) -> str | None:
-        return _validate_photo_data_url(value)
-
 
 class ContactRead(ContactBase):
     """A stored contact, as returned by every contact endpoint."""
