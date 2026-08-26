@@ -79,6 +79,29 @@ def test_create_rejects_empty_address(client, payload):
     assert response.status_code == 422
 
 
+def test_create_rejects_whitespace_only_address(client, payload):
+    response = client.post(
+        BASE,
+        json={**payload, "addresses": [{"type": "Home", "street": "   "}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_trims_address_fields(client, payload):
+    response = client.post(
+        BASE,
+        json={
+            **payload,
+            "addresses": [{"type": "Work", "street": "  1 Market St  ", "city": " SF "}],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["addresses"][0]["street"] == "1 Market St"
+    assert response.json()["addresses"][0]["city"] == "SF"
+
+
 def test_create_rejects_unsupported_photo_type(client, payload):
     gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
     response = client.post(BASE, json={**payload, "photo": gif})

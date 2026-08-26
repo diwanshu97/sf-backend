@@ -94,6 +94,13 @@ class AddressBase(BaseModel):
         default=None, max_length=120, description="Country name.", examples=["USA"]
     )
 
+    @field_validator("street", "city", "state", "postal_code", "country", mode="before")
+    @classmethod
+    def _normalize_location(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
     @model_validator(mode="after")
     def _has_location(self) -> "AddressBase":
         if not any((self.street, self.city, self.state, self.postal_code, self.country)):

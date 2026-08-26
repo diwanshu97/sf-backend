@@ -83,27 +83,46 @@ def _migrate_legacy_addresses(target_engine: Engine) -> None:
         connection.execute(
             text(
                 """
+                CREATE TABLE IF NOT EXISTS app_schema_migrations (
+                    name VARCHAR(200) PRIMARY KEY
+                )
+                """
+            )
+        )
+        claimed = connection.execute(
+            text(
+                """
+                INSERT INTO app_schema_migrations (name)
+                VALUES ('legacy-contact-addresses-v1')
+                ON CONFLICT (name) DO NOTHING
+                RETURNING name
+                """
+            )
+        ).scalar_one_or_none()
+        if claimed is None:
+            return
+
+        connection.execute(
+            text(
+                """
                 INSERT INTO addresses
                     (contact_id, "type", street, city, state, postal_code, country)
                 SELECT
                     contacts.id,
                     'Home',
-                    contacts.address,
-                    contacts.city,
-                    contacts.state,
-                    contacts.postal_code,
-                    contacts.country
+                    NULLIF(TRIM(contacts.address), ''),
+                    NULLIF(TRIM(contacts.city), ''),
+                    NULLIF(TRIM(contacts.state), ''),
+                    NULLIF(TRIM(contacts.postal_code), ''),
+                    NULLIF(TRIM(contacts.country), '')
                 FROM contacts
                 WHERE (
-                    contacts.address IS NOT NULL
-                    OR contacts.city IS NOT NULL
-                    OR contacts.state IS NOT NULL
-                    OR contacts.postal_code IS NOT NULL
-                    OR contacts.country IS NOT NULL
+                    NULLIF(TRIM(contacts.address), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.city), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.state), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.postal_code), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.country), '') IS NOT NULL
                 )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM addresses WHERE addresses.contact_id = contacts.id
-                  )
                 """
             )
         )
