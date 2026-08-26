@@ -51,6 +51,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _upgrade_contacts_schema(engine)
+    _migrate_legacy_addresses(engine)
 
 
 def _upgrade_contacts_schema(target_engine: Engine) -> None:
@@ -66,6 +67,65 @@ def _upgrade_contacts_schema(target_engine: Engine) -> None:
     # PostgreSQL databases and preserves every existing contact.
     with target_engine.begin() as connection:
         connection.execute(text("ALTER TABLE contacts ADD COLUMN photo TEXT"))
+
+
+def _migrate_legacy_addresses(target_engine: Engine) -> None:
+    """Copy each pre-one-to-many address into a Home address exactly once."""
+    inspector = inspect(target_engine)
+    if not {"contacts", "addresses"}.issubset(inspector.get_table_names()):
+        return
+    legacy_columns = {"address", "city", "state", "postal_code", "country"}
+    contact_columns = {column["name"] for column in inspector.get_columns("contacts")}
+    if not legacy_columns.issubset(contact_columns):
+        return
+
+    with target_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS app_schema_migrations (
+                    name VARCHAR(200) PRIMARY KEY
+                )
+                """
+            )
+        )
+        claimed = connection.execute(
+            text(
+                """
+                INSERT INTO app_schema_migrations (name)
+                VALUES ('legacy-contact-addresses-v1')
+                ON CONFLICT (name) DO NOTHING
+                RETURNING name
+                """
+            )
+        ).scalar_one_or_none()
+        if claimed is None:
+            return
+
+        connection.execute(
+            text(
+                """
+                INSERT INTO addresses
+                    (contact_id, "type", street, city, state, postal_code, country)
+                SELECT
+                    contacts.id,
+                    'Home',
+                    NULLIF(TRIM(contacts.address), ''),
+                    NULLIF(TRIM(contacts.city), ''),
+                    NULLIF(TRIM(contacts.state), ''),
+                    NULLIF(TRIM(contacts.postal_code), ''),
+                    NULLIF(TRIM(contacts.country), '')
+                FROM contacts
+                WHERE (
+                    NULLIF(TRIM(contacts.address), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.city), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.state), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.postal_code), '') IS NOT NULL
+                    OR NULLIF(TRIM(contacts.country), '') IS NOT NULL
+                )
+                """
+            )
+        )
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models import Contact
+from app.models import Address, Contact
 from app.schemas import ContactCreate, ContactReplace, ContactUpdate
 
 SORTABLE_FIELDS = ("id", "first_name", "last_name", "email", "company", "created_at", "updated_at")
@@ -12,7 +12,8 @@ def _normalize_email(email: str) -> str:
 
 
 def get_contact(db: Session, contact_id: int) -> Contact | None:
-    return db.get(Contact, contact_id)
+    stmt = select(Contact).options(selectinload(Contact.addresses)).where(Contact.id == contact_id)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def get_contact_by_email(db: Session, email: str) -> Contact | None:
@@ -53,16 +54,21 @@ def list_contacts(
     if sort_by not in SORTABLE_FIELDS:
         sort_by = "id"
     column = getattr(Contact, sort_by)
-    stmt = stmt.order_by(column.desc() if order == "desc" else column.asc())
+    stmt = stmt.options(selectinload(Contact.addresses)).order_by(
+        column.desc() if order == "desc" else column.asc()
+    )
 
     items = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
     return list(items), total
 
 
 def create_contact(db: Session, payload: ContactCreate) -> Contact:
-    data = payload.model_dump()
+    data = payload.model_dump(exclude={"addresses"})
     data["email"] = _normalize_email(data["email"])
-    contact = Contact(**data)
+    contact = Contact(
+        **data,
+        addresses=[Address(**address.model_dump()) for address in payload.addresses],
+    )
     db.add(contact)
     db.commit()
     db.refresh(contact)
@@ -70,16 +76,21 @@ def create_contact(db: Session, payload: ContactCreate) -> Contact:
 
 
 def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> Contact:
-    for field, value in payload.model_dump().items():
+    for field, value in payload.model_dump(exclude={"addresses"}).items():
         setattr(contact, field, _normalize_email(value) if field == "email" else value)
+    contact.addresses = [Address(**address.model_dump()) for address in payload.addresses]
     db.commit()
     db.refresh(contact)
     return contact
 
 
 def update_contact(db: Session, contact: Contact, payload: ContactUpdate) -> Contact:
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    addresses = data.pop("addresses", None)
+    for field, value in data.items():
         setattr(contact, field, _normalize_email(value) if field == "email" else value)
+    if addresses is not None:
+        contact.addresses = [Address(**address) for address in addresses]
     db.commit()
     db.refresh(contact)
     return contact

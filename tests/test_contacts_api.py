@@ -34,6 +34,74 @@ def test_create_contact_with_photo(client, payload):
     assert response.json()["photo"] == PNG_PHOTO
 
 
+def test_create_contact_with_multiple_addresses(client, payload):
+    addresses = [
+        {
+            "type": "Home",
+            "street": "1 Market St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "USA",
+        },
+        {
+            "type": "Work",
+            "street": "1 Hacker Way",
+            "city": "Menlo Park",
+            "state": "CA",
+            "postal_code": "94025",
+            "country": "USA",
+        },
+    ]
+    response = client.post(BASE, json={**payload, "addresses": addresses})
+
+    assert response.status_code == 201
+    stored = response.json()["addresses"]
+    assert [address["type"] for address in stored] == ["Home", "Work"]
+    assert all(address["id"] > 0 for address in stored)
+
+
+def test_create_rejects_invalid_address_type(client, payload):
+    response = client.post(
+        BASE,
+        json={**payload, "addresses": [{"type": "Vacation", "street": "Beach"}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_rejects_empty_address(client, payload):
+    response = client.post(
+        BASE,
+        json={**payload, "addresses": [{"type": "Home"}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_rejects_whitespace_only_address(client, payload):
+    response = client.post(
+        BASE,
+        json={**payload, "addresses": [{"type": "Home", "street": "   "}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_trims_address_fields(client, payload):
+    response = client.post(
+        BASE,
+        json={
+            **payload,
+            "addresses": [{"type": "Work", "street": "  1 Market St  ", "city": " SF "}],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["addresses"][0]["street"] == "1 Market St"
+    assert response.json()["addresses"][0]["city"] == "SF"
+
+
 def test_create_rejects_unsupported_photo_type(client, payload):
     gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
     response = client.post(BASE, json={**payload, "photo": gif})
@@ -148,6 +216,24 @@ def test_patch_can_remove_photo(client, payload):
     assert response.json()["photo"] is None
 
 
+def test_patch_preserves_addresses_when_omitted(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"company": "New Company"})
+
+    assert response.status_code == 200
+    assert len(response.json()["addresses"]) == 1
+
+
+def test_patch_replaces_addresses_when_supplied(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    replacement = [{"type": "Other", "street": "42 New Road", "country": "UK"}]
+    response = client.patch(f"{BASE}/{contact_id}", json={"addresses": replacement})
+
+    assert response.status_code == 200
+    assert response.json()["addresses"][0]["type"] == "Other"
+    assert response.json()["addresses"][0]["street"] == "42 New Road"
+
+
 def test_patch_duplicate_email_conflicts(client, payload):
     first = client.post(BASE, json=payload).json()["id"]
     client.post(BASE, json={**payload, "email": "grace@example.com"})
@@ -179,6 +265,36 @@ def test_put_preserves_photo_when_resubmitted(client, payload):
 
     assert response.status_code == 200
     assert response.json()["photo"] == PNG_PHOTO
+
+
+def test_put_replaces_entire_address_collection(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    replacement = [
+        {"type": "Work", "street": "100 Main St"},
+        {"type": "Other", "street": "PO Box 7"},
+    ]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "addresses": replacement})
+
+    assert response.status_code == 200
+    assert [(item["type"], item["street"]) for item in response.json()["addresses"]] == [
+        ("Work", "100 Main St"),
+        ("Other", "PO Box 7"),
+    ]
+
+
+def test_delete_contact_cascades_to_addresses(client, payload):
+    from sqlalchemy import text
+
+    from app.database import SessionLocal
+
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    assert client.delete(f"{BASE}/{contact_id}").status_code == 204
+    with SessionLocal() as db:
+        count = db.execute(
+            text("SELECT COUNT(*) FROM addresses WHERE contact_id = :contact_id"),
+            {"contact_id": contact_id},
+        ).scalar_one()
+    assert count == 0
 
 
 def test_put_missing_contact_returns_404(client):
