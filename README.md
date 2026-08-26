@@ -107,12 +107,17 @@ also read):
 (case-insensitive). Everything else is optional.
 
 ```
-first_name, last_name, email, phone, photo, company, job_title,
-address, city, state, postal_code, country, notes
+first_name, last_name, email, phone, photo, company, job_title, notes, addresses
 ```
 
 `photo` accepts a base64 data URL containing a JPEG, PNG, or WebP image up to
 2 MiB. It is stored with the contact in the in-memory database.
+
+`addresses` is a list of nested address records. Each address has its own `id`,
+an address `type` (`Home`, `Work`, or `Other`) and location fields for street,
+city, state, postal code, and country. At least one location field is required.
+Addresses are stored in a separate table
+linked to contacts by a foreign key and are deleted with their contact.
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 
@@ -173,7 +178,7 @@ app/
   main.py             FastAPI app, lifespan startup, /health and /
   config.py           Environment-driven settings
   database.py         Engine, session factory, StaticPool in-memory wiring
-  models.py           Contact ORM model
+  models.py           Contact and Address ORM models with a one-to-many relationship
   schemas.py          Pydantic request/response models
   crud.py             Database operations (search, sort, paginate)
   seed.py             Sample contacts for the in-memory default

@@ -51,6 +51,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _upgrade_contacts_schema(engine)
+    _migrate_legacy_addresses(engine)
 
 
 def _upgrade_contacts_schema(target_engine: Engine) -> None:
@@ -66,6 +67,46 @@ def _upgrade_contacts_schema(target_engine: Engine) -> None:
     # PostgreSQL databases and preserves every existing contact.
     with target_engine.begin() as connection:
         connection.execute(text("ALTER TABLE contacts ADD COLUMN photo TEXT"))
+
+
+def _migrate_legacy_addresses(target_engine: Engine) -> None:
+    """Copy each pre-one-to-many address into a Home address exactly once."""
+    inspector = inspect(target_engine)
+    if not {"contacts", "addresses"}.issubset(inspector.get_table_names()):
+        return
+    legacy_columns = {"address", "city", "state", "postal_code", "country"}
+    contact_columns = {column["name"] for column in inspector.get_columns("contacts")}
+    if not legacy_columns.issubset(contact_columns):
+        return
+
+    with target_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO addresses
+                    (contact_id, "type", street, city, state, postal_code, country)
+                SELECT
+                    contacts.id,
+                    'Home',
+                    contacts.address,
+                    contacts.city,
+                    contacts.state,
+                    contacts.postal_code,
+                    contacts.country
+                FROM contacts
+                WHERE (
+                    contacts.address IS NOT NULL
+                    OR contacts.city IS NOT NULL
+                    OR contacts.state IS NOT NULL
+                    OR contacts.postal_code IS NOT NULL
+                    OR contacts.country IS NOT NULL
+                )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM addresses WHERE addresses.contact_id = contacts.id
+                  )
+                """
+            )
+        )
 
 
 def get_db() -> Generator[Session, None, None]:
