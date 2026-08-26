@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -46,10 +46,26 @@ def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
 
 
 def init_db() -> None:
-    """Create tables. Called on startup; safe to call repeatedly."""
+    """Create or upgrade tables. Called on startup; safe to call repeatedly."""
     from app import models  # noqa: F401  (register models on Base.metadata)
 
     Base.metadata.create_all(bind=engine)
+    _upgrade_contacts_schema(engine)
+
+
+def _upgrade_contacts_schema(target_engine: Engine) -> None:
+    """Add nullable columns introduced after the original schema was released."""
+    inspector = inspect(target_engine)
+    if "contacts" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("contacts")}
+    if "photo" in columns:
+        return
+
+    # The nullable TEXT definition is portable across supported SQLite and
+    # PostgreSQL databases and preserves every existing contact.
+    with target_engine.begin() as connection:
+        connection.execute(text("ALTER TABLE contacts ADD COLUMN photo TEXT"))
 
 
 def get_db() -> Generator[Session, None, None]:
