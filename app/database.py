@@ -1,7 +1,7 @@
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -26,6 +26,11 @@ def _engine_kwargs(database_url: str) -> dict:
 
 
 settings = get_settings()
+
+# Stable signed-bigint key for PostgreSQL's transaction-scoped advisory lock.
+# The hexadecimal bytes spell "SFADDRV1", keeping this migration independent
+# from any future schema locks.
+_LEGACY_ADDRESS_MIGRATION_LOCK = 0x5346414444525631
 
 engine = create_engine(
     settings.database_url,
@@ -80,6 +85,7 @@ def _migrate_legacy_addresses(target_engine: Engine) -> None:
         return
 
     with target_engine.begin() as connection:
+        _lock_legacy_address_migration(connection, target_engine.dialect.name)
         connection.execute(
             text(
                 """
@@ -126,6 +132,16 @@ def _migrate_legacy_addresses(target_engine: Engine) -> None:
                 """
             )
         )
+
+
+def _lock_legacy_address_migration(connection: Connection, dialect_name: str) -> None:
+    """Serialize PostgreSQL's first marker-table creation and address backfill."""
+    if dialect_name != "postgresql":
+        return
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": _LEGACY_ADDRESS_MIGRATION_LOCK},
+    )
 
 
 def get_db() -> Generator[Session, None, None]:
