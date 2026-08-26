@@ -1,6 +1,13 @@
+from unittest.mock import Mock
+
 from sqlalchemy import create_engine, inspect, text
 
-from app.database import _migrate_legacy_addresses, _upgrade_contacts_schema
+from app.database import (
+    _LEGACY_ADDRESS_MIGRATION_LOCK,
+    _lock_legacy_address_migration,
+    _migrate_legacy_addresses,
+    _upgrade_contacts_schema,
+)
 
 
 def test_upgrade_adds_photo_to_legacy_contacts_table():
@@ -24,6 +31,24 @@ def test_upgrade_is_idempotent():
 
     columns = [column["name"] for column in inspect(legacy_engine).get_columns("contacts")]
     assert columns.count("photo") == 1
+
+
+def test_postgres_address_migration_lock_precedes_ddl():
+    connection = Mock()
+
+    _lock_legacy_address_migration(connection, "postgresql")
+
+    statement, parameters = connection.execute.call_args.args
+    assert str(statement) == "SELECT pg_advisory_xact_lock(:lock_key)"
+    assert parameters == {"lock_key": _LEGACY_ADDRESS_MIGRATION_LOCK}
+
+
+def test_non_postgres_address_migration_needs_no_advisory_lock():
+    connection = Mock()
+
+    _lock_legacy_address_migration(connection, "sqlite")
+
+    connection.execute.assert_not_called()
 
 
 def test_legacy_address_is_migrated_once():
