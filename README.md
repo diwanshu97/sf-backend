@@ -107,9 +107,12 @@ also read):
 (case-insensitive). Everything else is optional.
 
 ```
-first_name, last_name, email, phone, company, job_title,
+first_name, last_name, email, phone, photo, company, job_title,
 address, city, state, postal_code, country, notes
 ```
+
+`photo` accepts a base64 data URL containing a JPEG, PNG, or WebP image up to
+2 MiB. It is stored with the contact in the in-memory database.
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 
